@@ -9,7 +9,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package.json ./
-RUN npm install --omit=dev --allow-git=all
+RUN npm cache clean --force \
+    && npm install --omit=dev --allow-git=all --no-audit --no-fund
 
 COPY . .
 
