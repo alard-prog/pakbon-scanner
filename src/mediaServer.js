@@ -11,8 +11,7 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import QRCode from 'qrcode';
-import { getLatestQr } from './qrState.js';
+import { getLatestQrBuffer } from './qrState.js';
 
 const MEDIA_DIR = path.resolve('data', 'media');
 
@@ -23,23 +22,18 @@ export function createMediaServer({ port, publicBaseUrl, logger }) {
   app.get('/health', (_req, res) => res.status(200).send('ok'));
   app.use('/media', express.static(MEDIA_DIR, { maxAge: '365d', immutable: true }));
 
-  // Genereert de QR-afbeelding "live" (in het geheugen, niet vanaf schijf)
-  // op basis van de meest recente QR-waarde die whatsappClient.js heeft
-  // doorgegeven. Geen bestand nodig, dus geen pad/timing-problemen.
-  app.get('/qr.png', async (_req, res) => {
+  // Geeft de meest recente, al kant-en-klare QR-afbeelding terug die
+  // whatsappClient.js heeft gegenereerd en in qrState.js heeft gezet.
+  // Deze module gebruikt zelf geen 'qrcode'-pakket, om problemen met
+  // modulewaterlaad-volgorde/resolutie te vermijden.
+  app.get('/qr.png', (_req, res) => {
     res.set('Cache-Control', 'no-store');
-    const qr = getLatestQr();
-    if (!qr) {
+    const buffer = getLatestQrBuffer();
+    if (!buffer) {
       return res.status(404).send('Nog geen QR-code beschikbaar.');
     }
-    try {
-      const buffer = await QRCode.toBuffer(qr, { width: 400 });
-      res.set('Content-Type', 'image/png');
-      res.send(buffer);
-    } catch (err) {
-      logger.error(`Kon QR-afbeelding niet genereren: ${err.message}`);
-      res.status(500).send('Kon QR-afbeelding niet genereren.');
-    }
+    res.set('Content-Type', 'image/png');
+    res.send(buffer);
   });
 
   // Pagina die de QR-afbeelding toont en zichzelf elke paar seconden
