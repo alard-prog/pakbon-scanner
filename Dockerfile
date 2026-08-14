@@ -9,7 +9,6 @@ COPY . .
 
 # Data (WhatsApp-sessie + tijdelijke foto's) moet op een persistent volume staan,
 # anders moet je na elke herstart opnieuw de QR-code scannen.
-VOLUME ["/app/data"]
 
 EXPOSE 3000
 
