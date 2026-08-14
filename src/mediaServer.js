@@ -25,6 +25,7 @@ export function createMediaServer({ port, publicBaseUrl, logger }) {
   // Handige pagina om de WhatsApp-QR-code te scannen wanneer de ASCII-QR in
   // de terminal/logs (bv. Railway's logvenster) niet leesbaar weergeeft.
   app.get('/qr', (_req, res) => {
+    res.set('Cache-Control', 'no-store');
     if (!fs.existsSync(QR_IMAGE_PATH)) {
       return res
         .status(404)
@@ -34,10 +35,8 @@ export function createMediaServer({ port, publicBaseUrl, logger }) {
             'een QR-code — herlaad deze pagina dan opnieuw.'
         );
     }
-    res.set('Cache-Control', 'no-store');
     res.sendFile(QR_IMAGE_PATH);
   });
-
   const server = app.listen(port, () => {
     logger.info(`Media-server luistert op poort ${port}`);
   });
