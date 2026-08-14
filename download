@@ -1,5 +1,0 @@
-node_modules/
-data/auth/
-data/media/
-data/seen-ids.json
-.env
