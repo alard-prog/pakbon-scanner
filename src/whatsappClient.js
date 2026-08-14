@@ -19,7 +19,8 @@ import {
   fetchLatestBaileysVersion,
 } from '@whiskeysockets/baileys';
 import path from 'path';
-import qrcode from 'qrcode-terminal';
+import qrcodeTerminal from 'qrcode-terminal';
+import { setLatestQr, clearLatestQr } from './qrState.js';
 
 const AUTH_DIR = path.resolve('data', 'auth');
 
@@ -57,13 +58,19 @@ export async function startWhatsApp({ groupName, logger, onText, onImage }) {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
-    if (qr) {
+ if (qr) {
       logger.info('Scan deze QR-code met WhatsApp op je telefoon (Gekoppelde apparaten -> Apparaat koppelen):');
-      qrcode.generate(qr, { small: true });
+      qrcodeTerminal.generate(qr, { small: true });
+      setLatestQr(qr);
+      logger.info(
+        'Zie je hierboven geen duidelijke QR-code (kan gebeuren in Windows PowerShell of in ' +
+          'Railway\'s logvenster)? Open dan /qr op je publieke URL in een browser en scan die pagina.'
+      );
     }
 
     if (connection === 'open') {
       logger.info('Verbonden met WhatsApp.');
+      clearLatestQr();
       targetGroupJid = await resolveGroupJid();
     }
 
