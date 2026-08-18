@@ -53,6 +53,7 @@ export function createCodaClient({ apiToken, docId, tableId, logger }) {
       ];
 
       logger.info(`Rij toevoegen aan Coda voor melding van ${report.sender}`);
+      logger.info(`Foto-URL('s) die naar Coda gestuurd worden: ${report.photoUrls.join(', ')}`);
       await request(`/docs/${docId}/tables/${encodeURIComponent(tableId)}/rows`, {
         method: 'POST',
         body: JSON.stringify({ rows: [{ cells }] }),
