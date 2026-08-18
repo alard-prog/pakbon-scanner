@@ -4,13 +4,17 @@
  * Zet een "melding" (afzender, omschrijving, foto-URL's) om in een nieuwe
  * rij in de Coda-tabel via de officiële Coda REST API.
  *
- * Verwachte kolommen in de Coda-tabel (namen moeten exact overeenkomen,
- * zie README.md voor het aanmaken van de tabel):
- *   - Datum          (kolomtype: Date/time)
- *   - Afzender       (kolomtype: Text)
- *   - Omschrijving   (kolomtype: Text, "long text" aan)
- *   - Foto's         (kolomtype: Image/Attachment, "allow multiple" aan)
- *   - Bericht ID     (kolomtype: Text) - gebruikt om dubbele rijen te voorkomen
+ * Verwachte kolommen in de Coda-tabel "Inbox" (namen moeten exact
+ * overeenkomen):
+ *   - Datum                    (kolomtype: Date/time)
+ *   - Naam van persoon invult  (kolomtype: Text) - wordt gevuld met de afzender
+ *   - Opmerking                (kolomtype: Text, "long text" aan) - omschrijving
+ *   - Foto                     (kolomtype: Image/Attachment, "allow multiple" aan)
+ *   - Bericht ID               (kolomtype: Text) - gebruikt om dubbele rijen te voorkomen
+ *
+ * Alle overige kolommen in de tabel (In voorraadbeheersing, Bar naam,
+ * Levering/retour, Leverancier, Foto tellijst, Type levering, en de rest)
+ * worden bewust niet ingevuld door deze app.
  */
 
 const CODA_API_BASE = 'https://coda.io/apis/v1';
@@ -42,9 +46,9 @@ export function createCodaClient({ apiToken, docId, tableId, logger }) {
 
       const cells = [
         { column: 'Datum', value: iso },
-        { column: 'Afzender', value: report.sender },
-        { column: 'Omschrijving', value: report.text },
-        { column: "Foto's", value: report.photoUrls },
+        { column: 'Naam van persoon invult', value: report.sender },
+        { column: 'Opmerking', value: report.text },
+        { column: 'Foto', value: report.photoUrls },
         { column: 'Bericht ID', value: report.messageId },
       ];
 
