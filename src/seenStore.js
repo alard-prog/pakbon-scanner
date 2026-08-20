@@ -2,16 +2,20 @@
  * seenStore.js
  *
  * Simpele, op schijf bewaarde set van al verwerkte bericht-ID's, zodat een
- * herstart van de app niet leidt tot dubbele rijen in Coda.
+ * herstart van de app niet leidt tot dubbele rijen in Coda. Per koppeling
+ * (instanceId) wordt een eigen bestand gebruikt, zodat koppelingen
+ * elkaars dubbele-check niet beïnvloeden.
  */
 
 import fs from 'fs';
 import path from 'path';
 
-const FILE = path.resolve('data', 'seen-ids.json');
 const MAX_ENTRIES = 2000;
 
-export function createSeenStore() {
+export function createSeenStore(instanceId) {
+  const filename = instanceId ? `seen-${instanceId}.json` : 'seen-ids.json';
+  const FILE = path.resolve('data', filename);
+
   let ids = [];
   try {
     ids = JSON.parse(fs.readFileSync(FILE, 'utf8'));
