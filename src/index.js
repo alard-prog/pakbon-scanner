@@ -6,7 +6,8 @@ import crypto from 'crypto';
 
 import { createWebServer } from './webServer.js';
 import * as store from './koppelingenStore.js';
-import * as manager from './instanceManager.js';
+import * as wa from './waConnection.js';
+import * as router from './koppelingRouter.js';
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 
@@ -20,12 +21,37 @@ function requireEnv(name) {
 }
 
 /**
- * Als er nog geen koppelingen zijn opgeslagen, maar de oude, enkelvoudige
- * omgevingsvariabelen (van vóór het dashboard) wel zijn ingesteld, zetten we
- * die automatisch om in de eerste koppeling. Zo verlies je bij deze update
- * niet de WhatsApp-sessie en Coda-koppeling die je al had opgezet.
+ * Zet, indien nodig, een oudere configuratie om naar het huidige model
+ * (één gedeelde WhatsApp-sessie + koppelingen in koppelingen.json):
+ *
+ *  - Tussenversie (dashboard met een eigen sessie per koppeling): als er
+ *    een map data/auth/<uuid> met een sessie in staat, halen we die eruit
+ *    en gebruiken 'm als de ene, gedeelde sessie.
+ *  - Heel oude versie (vóór het dashboard): losse WHATSAPP_GROUP_NAME/
+ *    CODA_*-omgevingsvariabelen -> worden de eerste koppeling.
+ *
+ * Beide stappen zijn no-ops als de betreffende oude situatie niet van
+ * toepassing is, dus dit is veilig om bij elke opstart te controleren.
  */
-function migrateLegacyConfigIfNeeded() {
+function migrateIfNeeded() {
+  const authRoot = path.resolve('data', 'auth');
+  const flatCreds = path.join(authRoot, 'creds.json');
+
+  if (!fs.existsSync(flatCreds) && fs.existsSync(authRoot) && fs.statSync(authRoot).isDirectory()) {
+    const subdirs = fs
+      .readdirSync(authRoot)
+      .filter((name) => fs.statSync(path.join(authRoot, name)).isDirectory());
+    const withSession = subdirs.find((name) => fs.existsSync(path.join(authRoot, name, 'creds.json')));
+
+    if (withSession) {
+      const tmp = path.resolve('data', '__auth_migrating__');
+      fs.renameSync(path.join(authRoot, withSession), tmp);
+      fs.rmSync(authRoot, { recursive: true, force: true });
+      fs.renameSync(tmp, authRoot);
+      logger.info('Bestaande WhatsApp-sessie samengevoegd tot de ene, gedeelde sessie.');
+    }
+  }
+
   if (store.listKoppelingen().length > 0) return;
 
   const { WHATSAPP_GROUP_NAME, CODA_API_TOKEN, CODA_DOC_ID, CODA_TABLE_ID, FLUSH_DELAY_MS } = process.env;
@@ -43,36 +69,13 @@ function migrateLegacyConfigIfNeeded() {
     flushDelayMs: Number(FLUSH_DELAY_MS) || 15000,
     createdAt: Date.now(),
   };
+  store.addExistingKoppeling(koppeling);
 
-  // De oude WhatsApp-sessie stond in data/auth (zonder submap per koppeling).
-  // Verplaats die naar de nieuwe, per-koppeling locatie, zodat er niet
-  // opnieuw een QR-code gescand hoeft te worden.
-  const oldAuthDir = path.resolve('data', 'auth');
-  const newAuthDir = path.resolve('data', 'auth', koppeling.id);
-  const looksLikeOldSession =
-    fs.existsSync(oldAuthDir) &&
-    fs.statSync(oldAuthDir).isDirectory() &&
-    fs.readdirSync(oldAuthDir).some((f) => f.startsWith('creds.json'));
-
-  if (looksLikeOldSession) {
-    // Je kunt een map niet direct hernoemen naar een submap van zichzelf
-    // (data/auth -> data/auth/<id>), dus eerst even opzij zetten.
-    const tmpDir = path.resolve('data', '__auth_migrating__');
-    fs.renameSync(oldAuthDir, tmpDir);
-    fs.mkdirSync(oldAuthDir, { recursive: true });
-    fs.renameSync(tmpDir, newAuthDir);
-    logger.info('Bestaande WhatsApp-sessie meegenomen naar de nieuwe koppeling.');
-  }
-
-  // Ook de oude, enkelvoudige seen-ids.json meenemen, zodat er geen
-  // dubbele meldingen ontstaan voor berichten die al eerder verwerkt waren.
   const oldSeenFile = path.resolve('data', 'seen-ids.json');
   const newSeenFile = path.resolve('data', `seen-${koppeling.id}.json`);
   if (fs.existsSync(oldSeenFile) && !fs.existsSync(newSeenFile)) {
     fs.copyFileSync(oldSeenFile, newSeenFile);
   }
-
-  store.addExistingKoppeling(koppeling);
 }
 
 async function main() {
@@ -81,21 +84,19 @@ async function main() {
   const dashboardUsername = process.env.DASHBOARD_USERNAME || 'admin';
   const dashboardPassword = requireEnv('DASHBOARD_PASSWORD');
 
-  migrateLegacyConfigIfNeeded();
+  migrateIfNeeded();
 
-  const webServer = createWebServer({
-    port,
-    publicBaseUrl,
+  const webServer = createWebServer({ port, publicBaseUrl, logger, dashboardUsername, dashboardPassword });
+
+  router.init({ logger, saveImage: webServer.saveImage });
+
+  wa.start({
     logger,
-    dashboardUsername,
-    dashboardPassword,
+    onMessage: (msg) => router.handleIncoming(msg),
+    onGroupsResolved: () => router.refreshGroupMatches(),
   });
 
-  const koppelingen = store.listKoppelingen();
-  logger.info(`${koppelingen.length} koppeling(en) gevonden, starten...`);
-  for (const koppeling of koppelingen) {
-    await manager.startInstance(koppeling, { logger, saveImage: webServer.saveImage });
-  }
+  router.loadAll();
 
   logger.info(
     `Dashboard bereikbaar op ${publicBaseUrl} (gebruikersnaam "${dashboardUsername}", wachtwoord uit DASHBOARD_PASSWORD).`

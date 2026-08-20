@@ -1,15 +1,17 @@
 /**
  * webServer.js
  *
- * Eén Express-server die drie dingen doet:
+ * Eén Express-server die vier dingen doet:
  *   1. Host de gedownloade WhatsApp-foto's publiek (/media/...), zodat Coda
  *      ze kan overnemen.
- *   2. Toont per koppeling een QR-scanpagina (/koppelingen/:id/qr).
+ *   2. Toont een QR-scanpagina voor het ene, gedeelde WhatsApp-account
+ *      (/account/qr), inclusief de mogelijkheid om een ander account te
+ *      koppelen.
  *   3. Toont een dashboard (/) waarmee je koppelingen (WhatsApp-groep ->
- *      Coda-tabel) kunt toevoegen, bewerken, herstarten en verwijderen.
+ *      Coda-tabel) kunt toevoegen, bewerken en verwijderen.
+ *   4. Beveiligt dashboard en account-pagina's met een wachtwoord.
  *
- * Het dashboard en de QR-pagina's staan achter een simpel wachtwoord
- * (HTTP Basic Auth). /media en /health blijven bewust open, want Coda en
+ * /media en /health blijven bewust open, zonder wachtwoord: Coda en
  * Railway's health-check kunnen geen wachtwoord meesturen.
  */
 
@@ -19,24 +21,20 @@ import path from 'path';
 import crypto from 'crypto';
 
 import * as store from './koppelingenStore.js';
-import * as manager from './instanceManager.js';
+import * as wa from './waConnection.js';
+import * as router from './koppelingRouter.js';
 
 const MEDIA_DIR = path.resolve('data', 'media');
 
-const STATUS_LABELS = {
+const ACCOUNT_STATUS_LABELS = {
+  stopped: 'Gestopt',
   starting: 'Opstarten...',
   waiting_for_qr: 'Wacht op QR-scan',
   connected: 'Verbonden',
-  group_not_found: 'Verbonden, maar groep niet gevonden',
   reconnecting: 'Opnieuw verbinden...',
-  logged_out: 'Uitgelogd (opnieuw scannen nodig)',
+  logged_out: 'Uitgelogd (nieuwe QR-scan nodig)',
   error: 'Fout bij opstarten',
-  stopped: 'Gestopt',
 };
-
-function statusLabel(status) {
-  return STATUS_LABELS[status] || status;
-}
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => (
@@ -53,10 +51,12 @@ function layout(title, body) {
     <title>${escapeHtml(title)}</title>
     <style>
       body { font-family: sans-serif; background: #111; color: #eee; margin: 0; padding: 2rem 1rem; }
-      main { max-width: 720px; margin: 0 auto; }
+      main { max-width: 760px; margin: 0 auto; }
       h1 { font-size: 1.4rem; }
+      h2 { font-size: 1.1rem; margin-top: 2rem; }
       a { color: #8ab4f8; }
-      table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; }
+      section.card { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; }
+      table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
       th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #333; vertical-align: top; }
       .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.8rem; }
       .badge-ok { background: #1e4620; color: #8fd99f; }
@@ -79,21 +79,37 @@ function layout(title, body) {
 </html>`;
 }
 
-function badgeFor(status) {
-  const cls = status === 'connected' ? 'badge-ok'
-    : ['logged_out', 'error', 'group_not_found'].includes(status) ? 'badge-bad'
-    : 'badge-wait';
-  return `<span class="badge ${cls}">${escapeHtml(statusLabel(status))}</span>`;
+function koppelingBadge(status) {
+  const cls = status === 'gevonden' ? 'badge-ok' : 'badge-wait';
+  const text = status === 'gevonden' ? 'Actief' : 'Groep niet (nog) gevonden';
+  return `<span class="badge ${cls}">${escapeHtml(text)}</span>`;
+}
+
+function accountBadge(status) {
+  const cls = status === 'connected' ? 'badge-ok' : ['logged_out', 'error'].includes(status) ? 'badge-bad' : 'badge-wait';
+  return `<span class="badge ${cls}">${escapeHtml(ACCOUNT_STATUS_LABELS[status] || status)}</span>`;
 }
 
 function koppelingForm({ action, koppeling = {}, submitLabel }) {
+  const knownGroups = wa.getKnownGroups();
+  const datalist = knownGroups.length
+    ? `<datalist id="group-options">${knownGroups
+        .map((g) => `<option value="${escapeHtml(g.subject)}"></option>`)
+        .join('')}</datalist>`
+    : '';
+  const groupHint = knownGroups.length
+    ? 'Begin te typen voor suggesties uit de groepen waar het gekoppelde account nu al lid van is.'
+    : 'Nog geen groepenlijst beschikbaar (account nog niet verbonden) — vul de groepsnaam exact in.';
+
   return `
     <form method="post" action="${action}">
       <label>Naam (voor jezelf, bv. "Bar Voorraad")</label>
       <input name="name" required value="${escapeHtml(koppeling.name)}" />
 
       <label>Exacte naam van de WhatsApp-groep</label>
-      <input name="whatsappGroupName" required value="${escapeHtml(koppeling.whatsappGroupName)}" />
+      <input name="whatsappGroupName" required list="group-options" value="${escapeHtml(koppeling.whatsappGroupName)}" />
+      ${datalist}
+      <p class="hint">${groupHint}</p>
 
       <label>Coda API-token</label>
       <input name="codaApiToken" required value="${escapeHtml(koppeling.codaApiToken)}" />
@@ -119,12 +135,12 @@ function koppelingForm({ action, koppeling = {}, submitLabel }) {
     </form>`;
 }
 
-function qrPageHtml(id) {
+function qrPageHtml() {
   return `<!doctype html>
 <html lang="nl">
   <head>
     <meta charset="utf-8" />
-    <title>WhatsApp QR-code scannen</title>
+    <title>WhatsApp-account koppelen</title>
     <style>
       body { font-family: sans-serif; text-align: center; padding: 2rem; background: #111; color: #eee; }
       img { max-width: 320px; width: 90vw; background: #fff; padding: 1rem; border-radius: 8px; }
@@ -134,8 +150,8 @@ function qrPageHtml(id) {
   </head>
   <body>
     <h1>Scan met WhatsApp</h1>
-    <p>Instellingen &rarr; Gekoppelde apparaten &rarr; Apparaat koppelen.</p>
-    <img id="qr" src="/koppelingen/${id}/qr.png?t=0" alt="QR-code" onerror="this.style.opacity=0.3" />
+    <p>Instellingen &rarr; Gekoppelde apparaten &rarr; Apparaat koppelen. Gebruik het account dat lid is (of moet worden) van de groepen die je wilt uitlezen.</p>
+    <img id="qr" src="/account/qr.png?t=0" alt="QR-code" onerror="this.style.opacity=0.3" />
     <p id="status">Deze pagina vernieuwt automatisch elke paar seconden.</p>
     <p><a href="/">&larr; Terug naar het dashboard</a></p>
     <script>
@@ -144,9 +160,9 @@ function qrPageHtml(id) {
       setInterval(() => {
         const t = Date.now();
         const testImg = new Image();
-        testImg.onload = () => { img.src = '/koppelingen/${id}/qr.png?t=' + t; statusEl.textContent = 'Laatste update: ' + new Date().toLocaleTimeString(); };
-        testImg.onerror = () => { statusEl.textContent = 'Wachten op een nieuwe QR-code (nog niet beschikbaar of de app is inmiddels verbonden)...'; };
-        testImg.src = '/koppelingen/${id}/qr.png?t=' + t;
+        testImg.onload = () => { img.src = '/account/qr.png?t=' + t; statusEl.textContent = 'Laatste update: ' + new Date().toLocaleTimeString(); };
+        testImg.onerror = () => { statusEl.textContent = 'Wachten op een nieuwe QR-code (nog niet beschikbaar of het account is inmiddels verbonden)...'; };
+        testImg.src = '/account/qr.png?t=' + t;
       }, 3000);
     </script>
   </body>
@@ -185,37 +201,41 @@ export function createWebServer({ port, publicBaseUrl, logger, dashboardUsername
   // -- Alles hieronder staat achter het dashboard-wachtwoord --
   app.use(requireAuth);
 
-  app.get('/koppelingen/:id/qr.png', (req, res) => {
+  app.get('/account/qr.png', (_req, res) => {
     res.set('Cache-Control', 'no-store');
-    const buffer = manager.getQrBuffer(req.params.id);
-    if (!buffer) {
-      return res.status(404).send('Nog geen QR-code beschikbaar.');
-    }
+    const buffer = wa.getQrBuffer();
+    if (!buffer) return res.status(404).send('Nog geen QR-code beschikbaar.');
     res.set('Content-Type', 'image/png');
     res.send(buffer);
   });
 
-  app.get('/koppelingen/:id/qr', (req, res) => {
-    if (!store.getKoppeling(req.params.id)) return res.status(404).send('Koppeling niet gevonden.');
+  app.get('/account/qr', (_req, res) => {
     res.set('Cache-Control', 'no-store');
     res.set('Content-Type', 'text/html; charset=utf-8');
-    res.send(qrPageHtml(req.params.id));
+    res.send(qrPageHtml());
+  });
+
+  app.post('/account/nieuw-koppelen', (_req, res) => {
+    wa.switchAccount(logger);
+    res.redirect('/account/qr');
   });
 
   app.get('/', (_req, res) => {
+    router.refreshGroupMatches();
+    const accountStatus = wa.getStatus();
+    const connectedNumber = wa.getConnectedNumber();
+
     const koppelingen = store.listKoppelingen();
     const rows = koppelingen.length
       ? koppelingen
           .map((k) => {
-            const status = manager.getStatus(k.id);
+            const status = router.isGroupFound(k.id) ? 'gevonden' : 'niet_gevonden';
             return `<tr>
               <td>${escapeHtml(k.name)}<br /><span class="hint">${escapeHtml(k.whatsappGroupName)} &rarr; ${escapeHtml(k.codaTableId)}</span></td>
-              <td>${badgeFor(status)}</td>
+              <td>${koppelingBadge(status)}</td>
               <td class="actions">
-                <a class="btn" href="/koppelingen/${k.id}/qr">QR</a>
                 <a class="btn secondary" href="/koppelingen/${k.id}/bewerken">Bewerken</a>
-                <form style="display:inline" method="post" action="/koppelingen/${k.id}/herstart"><button class="secondary" type="submit">Herstart</button></form>
-                <form style="display:inline" method="post" action="/koppelingen/${k.id}/verwijderen" onsubmit="return confirm('Deze koppeling en de bijbehorende WhatsApp-sessie verwijderen?')"><button class="danger" type="submit">Verwijderen</button></form>
+                <form style="display:inline" method="post" action="/koppelingen/${k.id}/verwijderen" onsubmit="return confirm('Deze koppeling verwijderen?')"><button class="danger" type="submit">Verwijderen</button></form>
               </td>
             </tr>`;
           })
@@ -227,7 +247,18 @@ export function createWebServer({ port, publicBaseUrl, logger, dashboardUsername
         'Pakbon dashboard',
         `
         <h1>Pakbon dashboard</h1>
-        <p class="hint">Overzicht van alle WhatsApp-groep &rarr; Coda-tabel koppelingen die deze app beheert.</p>
+
+        <section class="card">
+          <h2 style="margin-top:0">WhatsApp-account</h2>
+          <p>${accountBadge(accountStatus)}${connectedNumber ? ` &mdash; gekoppeld nummer: <strong>+${escapeHtml(connectedNumber)}</strong>` : ''}</p>
+          <p class="hint">Dit account moet lid zijn van elke WhatsApp-groep die je hieronder als koppeling toevoegt.</p>
+          <a class="btn" href="/account/qr">QR-code bekijken</a>
+          <form style="display:inline" method="post" action="/account/nieuw-koppelen" onsubmit="return confirm('Dit koppelt het huidige WhatsApp-account los. Je koppelingen blijven staan, maar je moet een nieuwe QR-code scannen voordat er weer berichten binnenkomen. Doorgaan?')">
+            <button class="secondary" type="submit">Nieuw account koppelen</button>
+          </form>
+        </section>
+
+        <h2>Koppelingen (WhatsApp-groep &rarr; Coda-tabel)</h2>
         <div class="top-actions"><a class="btn" href="/koppelingen/nieuw">+ Nieuwe koppeling</a></div>
         <table>
           <thead><tr><th>Koppeling</th><th>Status</th><th>Acties</th></tr></thead>
@@ -238,7 +269,8 @@ export function createWebServer({ port, publicBaseUrl, logger, dashboardUsername
     );
   });
 
-  app.get('/koppelingen/nieuw', (_req, res) => {
+  app.get('/koppelingen/nieuw', async (_req, res) => {
+    await wa.refreshGroupsNow(logger);
     res.send(
       layout(
         'Nieuwe koppeling',
@@ -247,10 +279,10 @@ export function createWebServer({ port, publicBaseUrl, logger, dashboardUsername
     );
   });
 
-  app.post('/koppelingen', async (req, res) => {
+  app.post('/koppelingen', (req, res) => {
     const koppeling = store.createKoppeling(req.body);
-    await manager.startInstance(koppeling, { logger, saveImage });
-    res.redirect(`/koppelingen/${koppeling.id}/qr`);
+    router.addKoppeling(koppeling);
+    res.redirect('/');
   });
 
   app.get('/koppelingen/:id/bewerken', (req, res) => {
@@ -262,30 +294,21 @@ export function createWebServer({ port, publicBaseUrl, logger, dashboardUsername
         `<h1>Koppeling bewerken</h1>${koppelingForm({
           action: `/koppelingen/${koppeling.id}`,
           koppeling,
-          submitLabel: 'Opslaan en herstarten',
+          submitLabel: 'Opslaan',
         })}`
       )
     );
   });
 
-  app.post('/koppelingen/:id', async (req, res) => {
+  app.post('/koppelingen/:id', (req, res) => {
     const koppeling = store.updateKoppeling(req.params.id, req.body);
     if (!koppeling) return res.status(404).send('Koppeling niet gevonden.');
-    // Herstarten met nieuwe instellingen; de WhatsApp-sessie zelf blijft
-    // bewaard (authDir is gekoppeld aan het id, niet aan de instellingen).
-    await manager.restartInstance(koppeling, { logger, saveImage });
-    res.redirect('/');
-  });
-
-  app.post('/koppelingen/:id/herstart', async (req, res) => {
-    const koppeling = store.getKoppeling(req.params.id);
-    if (!koppeling) return res.status(404).send('Koppeling niet gevonden.');
-    await manager.restartInstance(koppeling, { logger, saveImage });
+    router.updateKoppeling(koppeling);
     res.redirect('/');
   });
 
   app.post('/koppelingen/:id/verwijderen', (req, res) => {
-    manager.removeInstanceAndData(req.params.id);
+    router.removeKoppeling(req.params.id);
     store.deleteKoppeling(req.params.id);
     res.redirect('/');
   });

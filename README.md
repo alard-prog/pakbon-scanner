@@ -5,9 +5,13 @@ een **foto + omschrijving** bevatten (zoals een voorraad- of retourmelding)
 als nieuwe rij in een Coda-tabel. Losse chatberichten, vragen en reacties
 zonder foto worden automatisch overgeslagen.
 
-Via een ingebouwd **dashboard** kun je meerdere onafhankelijke "koppelingen"
-(WhatsApp-groep → Coda-tabel) naast elkaar beheren, zonder dat je daarvoor
-meerdere keren de app moet deployen of code moet aanpassen.
+Er is **één gedeeld WhatsApp-account** nodig (dat lid moet zijn van alle
+groepen die je wilt uitlezen), en via een ingebouwd **dashboard** koppel je
+daarna elke groep aan een eigen Coda-tabel. Je kunt zo veel koppelingen
+naast elkaar laten draaien als je wilt, zonder dat je daarvoor de app
+opnieuw moet deployen of code moet aanpassen — en zonder dat je tegen
+WhatsApp's limiet van gekoppelde apparaten aanloopt (er is immers maar één
+sessie, hoeveel groepen je ook uitleest).
 
 ## Belangrijk om te weten
 
@@ -18,19 +22,37 @@ niet-officiële library die de WhatsApp Web-verbinding nabootst via een
 eenmalige QR-scan. Dit valt buiten WhatsApp's gebruiksvoorwaarden — in de
 praktijk is het risico op een blokkade laag voor dit soort licht gebruik,
 maar gebruik het alleen met een account/nummer waarvan je dat risico
-accepteert (bijv. niet je enige privénummer).
+accepteert (bijv. niet je enige privénummer — zie "Het WhatsApp-account"
+hieronder voor het gebruik van een apart nummer).
 
 ## Hoe het werkt
 
-1. Elke koppeling verbindt met WhatsApp en luistert alleen naar de groep die
-   je bij die koppeling instelt.
-2. Berichten van dezelfde afzender die kort na elkaar binnenkomen (tekst +
-   foto's) worden samengevoegd tot één "melding".
-3. Een melding wordt alleen doorgestuurd naar Coda als er zowel tekst
-   (omschrijving) als minstens één foto bij zit.
+1. De app maakt één WhatsApp-verbinding (het "account" in het dashboard),
+   die alle groepen ziet waar dat account lid van is.
+2. Voor elke groep waar je een koppeling voor hebt aangemaakt, worden
+   berichten van dezelfde afzender die kort na elkaar binnenkomen (tekst +
+   foto's) samengevoegd tot één "melding".
+3. Een melding wordt alleen doorgestuurd naar de bijbehorende Coda-tabel
+   als er zowel tekst (omschrijving) als minstens één foto bij zit.
 4. Foto's worden gedownload en tijdelijk gehost door de app zelf (nodig
    omdat Coda alleen foto's kan overnemen via een URL); Coda downloadt ze
    daarna zelf en bewaart een eigen, permanente kopie.
+
+## Het WhatsApp-account
+
+Bovenin het dashboard staat een kaart "WhatsApp-account" met de status en
+(als er een gescand is) het gekoppelde telefoonnummer. Dit ene account moet
+lid zijn van **elke** groep die je als koppeling toevoegt.
+
+- **Eerste keer scannen**: klik op **QR-code bekijken**, en scan met
+  WhatsApp op de telefoon die lid is (of moet worden) van de groepen —
+  Instellingen → Gekoppelde apparaten → Apparaat koppelen.
+- **Overstappen naar een ander nummer** (bijvoorbeeld van je eigen
+  privénummer naar een nummer specifiek voor deze app): klik op **Nieuw
+  account koppelen**. Dit koppelt het huidige account los en laat een
+  nieuwe QR-code verschijnen. Je koppelingen (groep → Coda-tabel) blijven
+  gewoon staan — zorg wel dat het nieuwe account lid is van diezelfde
+  groepen vóór je opnieuw scant, anders worden berichten niet gezien.
 
 ## Stap 1 — Coda-tabel aanmaken (per koppeling)
 
@@ -76,7 +98,7 @@ deployen.
    [railway.app](https://railway.app) (Deploy from GitHub repo). Railway
    herkent de `Dockerfile` automatisch.
 2. Voeg een **Volume** toe, gemount op `/app/data`. Essentieel: hier staan
-   alle WhatsApp-sessies en de dashboard-configuratie in.
+   de WhatsApp-sessie en de dashboard-configuratie in.
 3. Zet in **Variables**:
    - `PUBLIC_BASE_URL` — je publieke Railway-domein, met `https://` (genereer
       die eerst onder **Settings → Networking**).
@@ -90,33 +112,28 @@ deployen.
    dat is het dashboard. Log in met `admin` (of je eigen `DASHBOARD_USERNAME`)
    en het wachtwoord dat je bij `DASHBOARD_PASSWORD` hebt gezet.
 
-**Draaide je hiervoor al de oudere, enkelvoudige versie van deze app**
-(met `WHATSAPP_GROUP_NAME`/`CODA_*` als losse Variables)? Laat die
-Variables gewoon staan bij het updaten — de app herkent ze automatisch bij
-de eerste opstart na deze update, zet ze om in je eerste koppeling, en
-neemt je bestaande WhatsApp-sessie mee. Je hoeft dan niet opnieuw te
-scannen. Je kunt de oude Variables daarna desgewenst verwijderen; ze worden
-verder niet meer gebruikt.
+**Draaide je hiervoor al een oudere versie van deze app** (met
+`WHATSAPP_GROUP_NAME`/`CODA_*` als losse Variables, met of zonder
+dashboard)? Laat die Variables gewoon staan bij het updaten — de app
+herkent je bestaande situatie automatisch bij de eerste opstart na deze
+update, zet 'm om naar het huidige model, en neemt je bestaande WhatsApp-
+sessie mee. Je hoeft dan niet opnieuw te scannen. Je kunt de oude Variables
+daarna desgewenst verwijderen; ze worden verder niet meer gebruikt.
 
 ## Stap 4 — Koppelingen toevoegen via het dashboard
 
-1. Klik in het dashboard op **+ Nieuwe koppeling**.
-2. Vul in: een naam voor jezelf, de exacte WhatsApp-groepsnaam, het
-   Coda API-token, de Doc ID en de Table ID.
-3. Je wordt automatisch doorgestuurd naar de QR-scanpagina van die
-   koppeling. Scan de QR-code met WhatsApp op de telefoon die lid is van de
-   doelgroep (Instellingen → Gekoppelde apparaten → Apparaat koppelen).
-4. Zodra de status in het dashboard op **Verbonden** springt, is de
-   koppeling actief. Test met een berichtje met foto + omschrijving in de
-   groep en check of de rij in Coda verschijnt.
+1. Zorg dat het WhatsApp-account (zie hierboven) verbonden is en lid is van
+   de groep die je wilt toevoegen.
+2. Klik in het dashboard op **+ Nieuwe koppeling**.
+3. Vul in: een naam voor jezelf, de exacte WhatsApp-groepsnaam (je krijgt
+   suggesties uit de groepen waar het account al lid van is), het Coda
+   API-token, de Doc ID en de Table ID.
+4. Zodra de status van de koppeling op **Actief** springt, is 'm gevonden
+   en actief. Test met een berichtje met foto + omschrijving in de groep en
+   check of de rij in Coda verschijnt.
 
-Vanuit het dashboard kun je per koppeling ook:
-- **Bewerken** — instellingen aanpassen (de koppeling herstart automatisch
-  met de nieuwe waarden; de WhatsApp-sessie blijft behouden).
-- **Herstart** — handig als een koppeling vastloopt.
-- **Verwijderen** — stopt de koppeling en wist de bijbehorende WhatsApp-
-  sessie definitief (daarna is een nieuwe QR-scan nodig als je 'm opnieuw
-  toevoegt).
+Vanuit het dashboard kun je een koppeling ook **bewerken** (instellingen
+aanpassen, direct actief) of **verwijderen**.
 
 ## Beveiliging
 
@@ -140,10 +157,10 @@ Vanuit het dashboard kun je per koppeling ook:
 
 ## Bekende beperkingen
 
-- Elke koppeling werkt alleen zolang het gekoppelde WhatsApp-account lid
-  blijft van de groep en de sessie geldig blijft (WhatsApp kan een sessie
-  na langere tijd laten verlopen; dan moet opnieuw gescand worden via de
-  QR-knop van die koppeling).
+- Werkt alleen zolang het gekoppelde WhatsApp-account lid blijft van de
+  groepen en de sessie geldig blijft (WhatsApp kan een sessie na langere
+  tijd laten verlopen; dan moet opnieuw gescand worden via **Nieuw account
+  koppelen**).
 - Eén rij per melding, met alle foto's van die melding in de kolom "Foto" —
   er wordt niet per productregel (bv. per Red Bull-smaak) een losse rij
   gemaakt.
